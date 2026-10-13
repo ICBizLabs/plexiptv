@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"plexiptv/internal/ident"
 )
 
 type Client struct {
@@ -105,9 +107,7 @@ func (c *Client) get(ctx context.Context, u string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.UA != "" {
-		req.Header.Set("User-Agent", c.UA)
-	}
+	ident.Apply(req.Header, c.UA, false)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, redactErr(err, c)

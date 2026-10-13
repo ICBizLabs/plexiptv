@@ -12,6 +12,7 @@ import (
 
 	"plexiptv/internal/app"
 	"plexiptv/internal/catalog"
+	"plexiptv/internal/ident"
 	"plexiptv/internal/store"
 )
 
@@ -559,13 +560,15 @@ func (s *Server) stopStream(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	dummy, _ := s.a.St.GetSetting(r.Context(), "dummy_epg")
-	writeJSON(w, map[string]any{"dummy_epg": dummy != "0", "data_dir": s.a.Cfg.DataDir, "ffmpeg": s.a.Streams.FFmpegAvailable()})
+	writeJSON(w, map[string]any{"dummy_epg": dummy != "0", "data_dir": s.a.Cfg.DataDir, "ffmpeg": s.a.Streams.FFmpegAvailable(),
+		"user_agent": ident.Default(), "ua_presets": ident.Presets})
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		DummyEPG    *bool  `json:"dummy_epg"`
-		NewPassword string `json:"new_password"`
+		DummyEPG    *bool   `json:"dummy_epg"`
+		NewPassword string  `json:"new_password"`
+		UserAgent   *string `json:"user_agent"`
 	}
 	if err := readJSON(r, &b); err != nil {
 		writeErr(w, 400, err)
@@ -579,6 +582,18 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		s.a.St.SetSetting(ctx, "dummy_epg", v)
 		s.a.InvalidateEPG()
+	}
+	if b.UserAgent != nil {
+		ua := strings.TrimSpace(*b.UserAgent)
+		if strings.ContainsAny(ua, "\r\n") {
+			writeErr(w, 400, errors.New("invalid User-Agent"))
+			return
+		}
+		if err := s.a.St.SetSetting(ctx, "user_agent", ua); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		ident.SetDefault(ua)
 	}
 	if b.NewPassword != "" {
 		if len(b.NewPassword) < 4 {

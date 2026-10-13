@@ -15,6 +15,7 @@ plexiptv makes your IPTV provider show up in Plex as one or more HDHomeRun netwo
   - The provider connection limit is enforced, and a clean "all tuners busy" is returned when it's reached.
   - Stalled streams reconnect automatically.
   - HLS (`.m3u8`) streams are remuxed to MPEG-TS with ffmpeg.
+- **Looks like a TV to your provider.** Playlist, guide and stream requests go out with the User-Agent and headers of a Samsung Smart TV by default (not `Go-http-client` or ffmpeg's `Lavf`). Choose LG webOS, Fire TV, VLC or a custom string under **Settings → Provider identity**, or per source.
 - **Guide:** XMLTV generated for only your lineup, with "auto-match EPG by name" and placeholder entries so Plex doesn't hide channels that have no guide data.
 
 ## Quick start (Windows)
@@ -104,6 +105,7 @@ Check the **Logs** page first, or `data/plexiptv.log`. Credentials are redacted 
 | Plex doesn't find the tuner | Add it by `IP:port` from the dashboard. Allow the exe through the firewall. UDP 65001 must be reachable for auto-discovery. |
 | Channels missing in Plex | Plex hides channels that have no guide data: keep *placeholder guide entries* on (Settings). Check the tuner isn't over ~480 channels. |
 | "All tuners are in use" | The provider's connection limit was reached. See *Sources → streams x/y*. Set *Max concurrent streams* if the provider reports it wrong. |
+| Provider returns 403 / blocks the app | Try another device under *Settings → Provider identity* (e.g. the one your provider's own app or your TV uses). Redirect stream mode bypasses this, since Plex then connects directly. |
 | Stream won't start (HLS source) | Install ffmpeg and set `ffmpeg_path`. Settings shows whether it was found. |
 | Panel shows old channel list | Click *Refresh* on the source. Imports that return zero channels are rejected and the previous list is kept. |
 

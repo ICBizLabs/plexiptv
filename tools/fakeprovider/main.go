@@ -66,6 +66,7 @@ func playerAPI(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"user_info": map[string]any{"auth": 0}})
 		return
 	}
+	log.Printf("api %s ua=%q accept=%q lang=%q", q.Get("action"), r.UserAgent(), r.Header.Get("Accept"), r.Header.Get("Accept-Language"))
 	w.Header().Set("Content-Type", "application/json")
 	bw := bufio.NewWriterSize(w, 1<<16)
 	defer bw.Flush()
@@ -161,7 +162,7 @@ func stream(w http.ResponseWriter, r *http.Request) {
 	}
 	open.Add(1)
 	defer open.Add(-1)
-	log.Printf("stream open %s (open=%d)", parts[3], open.Load())
+	log.Printf("stream open %s (open=%d) ua=%q accept=%q encoding=%q", parts[3], open.Load(), r.UserAgent(), r.Header.Get("Accept"), r.Header.Get("Accept-Encoding"))
 	w.Header().Set("Content-Type", "video/mp2t")
 	pkt := make([]byte, 188*350)
 	for i := 0; i < len(pkt); i += 188 {

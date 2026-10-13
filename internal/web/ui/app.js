@@ -519,7 +519,7 @@ function sourceDialog(s) {
     max_conns: h('input', { type: 'number', min: 0, value: s.max_conns || 0 }),
     stream_mode: h('select', {}, opt('auto', 'Auto (proxy; ffmpeg for HLS)', s.stream_mode || 'auto'), opt('proxy', 'Proxy (pass-through)', s.stream_mode),
       opt('ffmpeg', 'ffmpeg remux', s.stream_mode), opt('redirect', 'Redirect (no proxy)', s.stream_mode)),
-    user_agent: h('input', { value: s.user_agent || '', placeholder: 'blank = Go default' }),
+    user_agent: h('input', { value: s.user_agent || '', placeholder: 'blank = identity from Settings', list: 'ua-presets' }),
     refresh_hours: h('input', { type: 'number', min: 0, value: s.refresh_hours ?? 24 }),
     enabled: h('input', { type: 'checkbox', checked: isNew || s.enabled }),
   };
@@ -533,7 +533,7 @@ function sourceDialog(s) {
       field('Max concurrent streams', i.max_conns, kind === 'xtream' ? '0 = use the limit your provider reports' : '0 = unlimited'),
       field('Stream mode', i.stream_mode),
     ] : null,
-    field('User-Agent', i.user_agent),
+    field('User-Agent', [i.user_agent, uaList()], 'Only needed if this provider wants a different device than the one set in Settings.'),
     field('Auto refresh (hours)', i.refresh_hours, '0 = only when you click Refresh'),
     h('label', { class: 'check' }, i.enabled, 'Enabled'));
   modal((isNew ? 'Add ' : 'Edit ') + label, body, [
@@ -548,6 +548,12 @@ function sourceDialog(s) {
         closeModal(); toast(isNew ? 'Source added — importing in the background' : 'Saved'); route();
       } catch (err) { fail(err); }
     } }, isNew ? 'Add and import' : 'Save')]);
+}
+
+function uaList() {
+  const dl = h('datalist', { id: 'ua-presets' });
+  api('GET', '/api/settings').then((s) => fill(dl, s.ua_presets.map((p) => h('option', { value: p.ua }, p.name)))).catch(() => {});
+  return dl;
 }
 
 // ---------- devices ----------
@@ -638,6 +644,12 @@ views.settings = async (view) => {
     try { await api('PUT', '/api/settings', { dummy_epg: e.target.checked }); toast('Saved'); } catch (err) { fail(err); }
   } });
   const pw = h('input', { type: 'password', autocomplete: 'new-password', placeholder: 'New password' });
+  const preset = s.ua_presets.find((p) => p.ua === s.user_agent);
+  const uaSel = h('select', {}, s.ua_presets.map((p) => opt(p.id, p.name, preset ? preset.id : 'custom')), opt('custom', 'Custom…', preset ? '' : 'custom'));
+  const uaIn = h('input', { value: s.user_agent, class: 'mono' });
+  uaIn.style.flex = '1 1 360px';
+  uaSel.onchange = () => { const p = s.ua_presets.find((x) => x.id === uaSel.value); if (p) uaIn.value = p.ua; else uaIn.focus(); };
+  uaIn.oninput = () => { const p = s.ua_presets.find((x) => x.ua === uaIn.value.trim()); uaSel.value = p ? p.id : 'custom'; };
   fill(view, 
     h('div', { class: 'card' }, h('h2', {}, 'Guide'),
       h('label', { class: 'check' }, dummy, 'Generate placeholder guide entries for channels without EPG data'),
@@ -645,6 +657,11 @@ views.settings = async (view) => {
       h('button', { onclick: async () => {
         try { const r = await api('POST', '/api/epg/automatch'); toast(`Matched ${r.matched} channel(s) to guide entries by name`); } catch (e) { fail(e); }
       } }, 'Auto-match missing EPG ids by name')),
+    h('div', { class: 'card' }, h('h2', {}, 'Provider identity'),
+      h('p', { class: 'muted' }, 'The device plexiptv pretends to be when it downloads playlists and guides and opens streams. Some providers block unknown apps. A source\'s own User-Agent overrides this. In Redirect stream mode Plex connects to the provider itself, so this doesn\'t apply there.'),
+      h('div', { class: 'row' }, uaSel, uaIn, h('button', { class: 'primary', onclick: async () => {
+        try { await api('PUT', '/api/settings', { user_agent: uaIn.value }); toast('Saved — used from the next refresh or stream'); } catch (e) { fail(e); }
+      } }, 'Save'))),
     h('div', { class: 'card' }, h('h2', {}, 'Password'),
       h('div', { class: 'row' }, pw, h('button', { onclick: async () => {
         try { await api('PUT', '/api/settings', { new_password: pw.value }); pw.value = ''; toast('Password changed'); } catch (e) { fail(e); }

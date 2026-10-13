@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"plexiptv/internal/epg"
+	"plexiptv/internal/ident"
 	"plexiptv/internal/redact"
 	"plexiptv/internal/source/m3u"
 	"plexiptv/internal/source/xtream"
@@ -43,6 +44,7 @@ type Result struct {
 // An EPG failure is recorded but does not fail the channel import.
 func (r *Refresher) Refresh(ctx context.Context, src store.Source) (Result, error) {
 	start := time.Now()
+	src.UserAgent = ident.Resolve(src.UserAgent)
 	var res Result
 	var epgURL string
 	var err error
@@ -231,9 +233,7 @@ func (r *Refresher) open(ctx context.Context, u, ua string) (io.ReadCloser, erro
 	if err != nil {
 		return nil, err
 	}
-	if ua != "" {
-		req.Header.Set("User-Agent", ua)
-	}
+	ident.Apply(req.Header, ua, false)
 	resp, err := r.HTTP.Do(req)
 	if err != nil {
 		return nil, err

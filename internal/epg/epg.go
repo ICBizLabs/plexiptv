@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"plexiptv/internal/ident"
 )
 
 // Download fetches url to dest, transparently gunzipping when needed.
@@ -25,9 +27,7 @@ func Download(ctx context.Context, hc *http.Client, url, ua, dest string) error 
 		if err != nil {
 			return err
 		}
-		if ua != "" {
-			req.Header.Set("User-Agent", ua)
-		}
+		ident.Apply(req.Header, ua, false)
 		resp, err := hc.Do(req)
 		if err != nil {
 			return err

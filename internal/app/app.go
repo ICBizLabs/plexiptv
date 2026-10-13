@@ -23,6 +23,7 @@ import (
 	"plexiptv/internal/config"
 	"plexiptv/internal/epg"
 	"plexiptv/internal/hdhr"
+	"plexiptv/internal/ident"
 	"plexiptv/internal/source"
 	"plexiptv/internal/store"
 	"plexiptv/internal/stream"
@@ -75,6 +76,8 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 		Streams: stream.NewManager(cfg.FFmpegPath, log),
 	}
 	ctx := context.Background()
+	ua, _ := st.GetSetting(ctx, "user_agent")
+	ident.SetDefault(ua)
 	if err := a.ensureDevice(ctx); err != nil {
 		return nil, err
 	}

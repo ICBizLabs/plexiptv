@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"plexiptv/internal/ident"
 	"plexiptv/internal/redact"
 )
 
@@ -331,9 +332,7 @@ func (m *Manager) open(ctx context.Context, req Request) (io.ReadCloser, string,
 	if err != nil {
 		return nil, "", err
 	}
-	if req.UserAgent != "" {
-		hreq.Header.Set("User-Agent", req.UserAgent)
-	}
+	ident.Apply(hreq.Header, req.UserAgent, true)
 	resp, err := m.HTTP.Do(hreq)
 	if err != nil {
 		return nil, "", err
@@ -375,9 +374,7 @@ func (f *ffmpegReader) Close() error {
 
 func (m *Manager) openFFmpeg(ctx context.Context, req Request) (io.ReadCloser, error) {
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
-	if req.UserAgent != "" {
-		args = append(args, "-user_agent", req.UserAgent)
-	}
+	args = append(args, ident.FFmpegArgs(req.UserAgent)...)
 	if strings.HasPrefix(req.URL, "http") {
 		args = append(args, "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2")
 	}
