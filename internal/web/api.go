@@ -199,6 +199,18 @@ func (s *Server) patchChannels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int{"updated": len(ids)})
 }
 
+// previewStream is the panel player's "fix audio" mode: the channel's own
+// stream, with audio converted to AAC by ffmpeg.
+func (s *Server) previewStream(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	e, ok := s.a.Cat.Get(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	s.a.Streams.Transcode(w, r, e.Name, s.a.LoopbackStreamURL(id))
+}
+
 func (s *Server) renumber(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		IDs   []int64 `json:"ids"`

@@ -89,6 +89,17 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 
 func (a *App) WebPort() int { return a.webPort }
 
+// LoopbackStreamURL is this instance's own stream URL for a channel. Local
+// consumers (the panel's audio-fix preview) use it so they share the
+// channel's upstream and connection limit like any other client.
+func (a *App) LoopbackStreamURL(id int64) string {
+	host, _, _ := net.SplitHostPort(a.Cfg.Listen)
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		host = "127.0.0.1"
+	}
+	return fmt.Sprintf("http://%s/stream/%d?via=panel", net.JoinHostPort(host, strconv.Itoa(a.webPort)), id)
+}
+
 func RandomDeviceID() string {
 	b := make([]byte, 4)
 	rand.Read(b)
@@ -310,6 +321,10 @@ func (a *App) serveStream(w http.ResponseWriter, r *http.Request) {
 	mode := e.Mode
 	if mode == "" {
 		mode = src.StreamMode
+	}
+	if mode == "redirect" && r.URL.Query().Get("via") == "panel" {
+		// The browser player can't follow a cross-origin redirect to the provider.
+		mode = "auto"
 	}
 	a.Streams.Serve(w, r, stream.Request{
 		ChannelID: e.ID, SourceID: src.ID, Name: e.Name,

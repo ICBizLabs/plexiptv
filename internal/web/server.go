@@ -70,6 +70,7 @@ func New(a *app.App, logs *logbuf.Buffer) *Server {
 
 	s.route("GET /api/channels", s.listChannels)
 	s.route("PATCH /api/channels", s.patchChannels)
+	s.route("GET /api/channels/{id}/preview", s.previewStream)
 	s.route("POST /api/channels/renumber", s.renumber)
 	s.route("GET /api/groups", s.listGroups)
 	s.route("POST /api/groups/toggle", s.toggleGroup)

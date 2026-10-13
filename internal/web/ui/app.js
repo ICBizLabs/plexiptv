@@ -80,6 +80,90 @@ function field(label, input, hint) {
   return h('label', { class: 'field' }, h('span', {}, label), input, hint ? h('small', { class: 'muted' }, hint) : null);
 }
 
+// ---------- player ----------
+// Browsers can't play MPEG-TS natively; mpegts.js (vendored, loaded on first
+// use) remuxes it for Media Source Extensions. Every open player holds a
+// provider connection, so it is torn down whenever the dialog closes.
+let mpegtsLoading = null;
+function loadMpegts() {
+  mpegtsLoading = mpegtsLoading || new Promise((ok, bad) => {
+    const s = h('script', { src: 'vendor/mpegts.min.js' });
+    s.onload = () => ok(window.mpegts);
+    s.onerror = () => { mpegtsLoading = null; s.remove(); bad(new Error('Could not load the player script.')); };
+    document.head.append(s);
+  });
+  return mpegtsLoading;
+}
+
+let player = null;
+function stopPlayer() {
+  const p = player;
+  player = null;
+  if (!p) return;
+  try { p.pause(); p.unload(); p.detachMediaElement(); p.destroy(); } catch (e) { /* already gone */ }
+}
+
+async function playChannel(r) {
+  const dlg = $('#player');
+  const url = `${location.origin}/stream/${r.id}`;
+  const video = h('video', { controls: true, autoplay: true, playsinline: true });
+  const info = h('span', { class: 'muted mono' });
+  const msg = h('div', { class: 'error' });
+  const mode = h('select', {}, opt('direct', 'Direct', 'direct'), opt('aac', 'Fix audio (ffmpeg → AAC)', ''));
+  const settings = await api('GET', '/api/settings').catch(() => ({}));
+  if (!settings.ffmpeg) { mode.options[1].disabled = true; mode.title = 'Needs ffmpeg'; }
+  mode.onchange = () => start();
+
+  function start() {
+    stopPlayer();
+    video.removeAttribute('src');
+    fill(msg);
+    info.textContent = 'Connecting…';
+    loadMpegts().then((mpegts) => {
+      if (!dlg.open) return;
+      if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('This browser can\'t play live streams. Open the link below in VLC instead.');
+      const p = mpegts.createPlayer({ type: 'mpegts', isLive: true,
+        url: mode.value === 'aac' ? `/api/channels/${r.id}/preview` : `/stream/${r.id}?via=panel` },
+      { enableStashBuffer: false, liveBufferLatencyChasing: true });
+      player = p;
+      p.on(mpegts.Events.MEDIA_INFO, (mi) => {
+        if (player !== p) return;
+        info.textContent = [mi.videoCodec, mi.width && `${mi.width}×${mi.height}`, mi.fps && `${Math.round(mi.fps)} fps`, mi.audioCodec].filter(Boolean).join(' · ');
+        const ac = (mi.audioCodec || '').toLowerCase();
+        if (mode.value === 'direct' && /^(ac-3|ec-3)/.test(ac) && !MediaSource.isTypeSupported(`audio/mp4; codecs="${ac}"`)) {
+          fill(msg, h('span', { class: 'warn' }, 'This browser can\'t decode the channel\'s Dolby (AC-3) audio, so it may play silently. '),
+            settings.ffmpeg ? h('a', { onclick: () => { mode.value = 'aac'; start(); } }, 'Use "Fix audio"') : 'Install ffmpeg to enable "Fix audio".');
+        }
+      });
+      p.on(mpegts.Events.ERROR, (type, detail, data) => {
+        if (player !== p) return;
+        const code = data && data.code;
+        info.textContent = '';
+        fill(msg, code === 503 ? 'All tuners are in use (your provider\'s connection limit is reached).'
+          : code === 502 ? 'The stream could not be converted. See the Logs page for ffmpeg\'s message.'
+          : `Playback failed: ${detail || type}${data && data.msg ? ' — ' + data.msg : ''}`,
+          mode.value === 'direct' && settings.ffmpeg && type === mpegts.ErrorTypes.MEDIA_ERROR
+            ? [' ', h('a', { onclick: () => { mode.value = 'aac'; start(); } }, 'Try "Fix audio"')] : null);
+      });
+      p.attachMediaElement(video);
+      p.load();
+      const pr = p.play();
+      if (pr && pr.catch) pr.catch(() => {});
+    }).catch((e) => { info.textContent = ''; fill(msg, e.message); });
+  }
+
+  fill(dlg,
+    h('div', { class: 'row' }, h('h2', { style: 'margin:0' }, r.number ? `${r.number} · ${r.name}` : r.name), h('span', { class: 'spacer' }),
+      h('button', { onclick: () => dlg.close() }, 'Close')),
+    video,
+    h('div', { class: 'row', style: 'margin-top:8px' }, mode, info),
+    msg,
+    h('p', { class: 'muted', style: 'margin:8px 0 0' }, 'Watching uses one of your provider connections until you close this. Stream link for VLC: ',
+      h('code', {}, url), ' ', h('button', { class: 'small', onclick: () => navigator.clipboard.writeText(url).then(() => toast('Copied')).catch(() => {}) }, 'Copy')));
+  dlg.showModal();
+  start();
+}
+
 // ---------- shared data ----------
 const store = { sources: [], devices: [], host: location.hostname, webPort: location.port || 80 };
 async function loadShared() {
@@ -90,6 +174,8 @@ const sourceName = (id) => (store.sources.find((s) => s.id === id) || {}).name |
 const deviceName = (id) => (store.devices.find((d) => d.id === id) || {}).name || 'default';
 
 // ---------- auth ----------
+$('#player').addEventListener('close', () => { stopPlayer(); fill($('#player')); });
+
 async function boot() {
   const st = await api('GET', '/api/state');
   if (!st.authed) return showLogin(st.setup);
@@ -130,7 +216,7 @@ function route() {
   (views[tab] || views.dashboard)(view, params).catch(fail);
 }
 document.querySelectorAll('#tabs a').forEach((a) => a.addEventListener('click', () => { location.hash = a.dataset.tab; }));
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => { $('#player').close(); route(); });
 
 // ---------- dashboard ----------
 views.dashboard = async (view) => {
@@ -293,13 +379,14 @@ views.channels = async (view, params) => {
         ch.rows.forEach((r) => e.target.checked ? ch.selected.add(r.id) : ch.selected.delete(r.id));
         renderTable(); renderBulk();
       } })),
-      ['', '#', 'Name', 'Group', 'EPG id', store.devices.length > 1 ? 'Tuner' : null, 'Status'].filter((x) => x !== null).map((t) => h('th', {}, t)));
+      ['', '', '#', 'Name', 'Group', 'EPG id', store.devices.length > 1 ? 'Tuner' : null, 'Status'].filter((x) => x !== null).map((t) => h('th', {}, t)));
     const body = ch.rows.map((r) => {
       const sel = ch.allMatching || ch.selected.has(r.id);
       return h('tr', { class: (sel ? 'selected ' : '') + (r.enabled ? '' : 'dim') },
         h('td', {}, h('input', { type: 'checkbox', checked: sel, disabled: ch.allMatching, onchange: (e) => {
           e.target.checked ? ch.selected.add(r.id) : ch.selected.delete(r.id); renderTable(); renderBulk();
         } })),
+        h('td', {}, h('button', { class: 'small', title: 'Watch', onclick: () => playChannel(r) }, '▶')),
         h('td', { class: 'logo' }, r.logo ? h('img', { src: r.logo, loading: 'lazy', alt: '', referrerpolicy: 'no-referrer', onerror: (e) => e.target.remove() }) : null),
         h('td', { class: 'num mono' }, r.number ? editable(String(r.number), '', (v) => patch([r.id], { number: parseInt(v, 10) || 0 }), 'number') : h('span', { class: 'muted' }, '—')),
         h('td', {}, editable(r.name, '', (v) => patch([r.id], { name: v === r.orig_name ? '' : v })),

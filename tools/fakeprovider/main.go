@@ -29,6 +29,7 @@ var (
 	slow    = flag.Duration("slow", 0, "delay per 1000 streams/lines, to simulate a slow provider")
 	progs   = flag.Int("progs", 12, "programmes (2h each) per guide channel")
 	hlsDir  = flag.String("hls", "", "directory served at /hls/ (for HLS tests)")
+	rateKB  = flag.Int("rate", 0, "pace /hls/*.ts files at this many KB/s, like a live channel (0 = full speed)")
 	open    atomic.Int32
 )
 
@@ -54,7 +55,7 @@ func main() {
 	http.HandleFunc("/xmltv.php", xmltv)
 	http.HandleFunc("/live/", stream)
 	if *hlsDir != "" {
-		http.Handle("/hls/", http.StripPrefix("/hls/", http.FileServer(http.Dir(*hlsDir))))
+		http.Handle("/hls/", http.StripPrefix("/hls/", paced(http.FileServer(http.Dir(*hlsDir)))))
 	}
 	log.Printf("fake provider on %s: %d live, %d vod, %d series", *addr, *live, *vod, *series)
 	log.Fatal(http.ListenAndServe(*addr, nil))
@@ -176,4 +177,38 @@ func stream(w http.ResponseWriter, r *http.Request) {
 		w.(http.Flusher).Flush()
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// paced slows .ts responses to -rate KB/s so a file behaves like a live feed.
+func paced(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if *rateKB <= 0 || !strings.HasSuffix(r.URL.Path, ".ts") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(&pacedWriter{ResponseWriter: w, start: time.Now()}, r)
+	})
+}
+
+type pacedWriter struct {
+	http.ResponseWriter
+	start time.Time
+	sent  int
+}
+
+func (p *pacedWriter) Write(b []byte) (int, error) {
+	total := len(b)
+	for len(b) > 0 {
+		n := min(len(b), 32<<10)
+		if _, err := p.ResponseWriter.Write(b[:n]); err != nil {
+			return 0, err
+		}
+		p.ResponseWriter.(http.Flusher).Flush()
+		p.sent += n
+		b = b[n:]
+		if ahead := time.Duration(p.sent)*time.Second/time.Duration(*rateKB<<10) - time.Since(p.start); ahead > 0 {
+			time.Sleep(ahead)
+		}
+	}
+	return total, nil
 }

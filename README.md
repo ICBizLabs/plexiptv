@@ -18,6 +18,7 @@ plexiptv makes your IPTV provider show up in Plex as one or more HDHomeRun netwo
   - Stalled streams reconnect automatically.
   - HLS (`.m3u8`) streams are remuxed to MPEG-TS with ffmpeg.
 - **Looks like a TV to your provider.** Playlist, guide and stream requests go out with the User-Agent and headers of a Samsung Smart TV by default (not `Go-http-client` or ffmpeg's `Lavf`). Choose LG webOS, Fire TV, VLC or a custom string under **Settings → Provider identity**, or per source.
+- **Watch in the browser.** Click ▶ on any channel to play it in the panel. The player shows the channel's codecs. If the browser can't decode the audio (Dolby AC-3 in Chrome and Firefox), **Fix audio** converts it to AAC with ffmpeg. The preview shares the channel's provider connection with Plex instead of opening a second one.
 - **Guide:** XMLTV generated for only your lineup, with "auto-match EPG by name" and placeholder entries so Plex doesn't hide channels that have no guide data.
 
 ## Quick start (Windows)
@@ -127,6 +128,7 @@ Check the **Logs** page first, or `data/plexiptv.log`. Credentials are redacted 
 | Channels missing in Plex | Plex hides channels that have no guide data: keep *placeholder guide entries* on (Settings). Check the tuner isn't over ~480 channels. |
 | "All tuners are in use" | The provider's connection limit was reached. See *Sources → streams x/y*. Set *Max concurrent streams* if the provider reports it wrong. |
 | Provider returns 403 / blocks the app | Try another device under *Settings → Provider identity* (e.g. the one your provider's own app or your TV uses). Redirect stream mode bypasses this, since Plex then connects directly. |
+| Panel player has no sound | The channel uses Dolby (AC-3) audio, which Chrome and Firefox can't decode. Choose **Fix audio** (needs ffmpeg). HEVC channels need a browser with HEVC support (Edge or Chrome on Windows with hardware decoding), or open the stream link in VLC. |
 | Stream won't start (HLS source) | Install ffmpeg and set `ffmpeg_path`. Settings shows whether it was found. |
 | Panel shows old channel list | Click *Refresh* on the source. Imports that return zero channels are rejected and the previous list is kept. |
 
@@ -143,5 +145,7 @@ go run ./cmd/plexiptv -data ./data
 ```
 
 Build release binaries with `./build.sh` or `build.ps1`. The version comes from `cmd/plexiptv/main.go`; pass one to override it (`./build.sh 1.1`). Go 1.23+ is required, and no C compiler is needed.
+
+The panel player uses [mpegts.js](https://github.com/xqq/mpegts.js) 1.7.3 (Apache-2.0), vendored in `internal/web/ui/vendor/` so the panel works offline. `fakeprovider -hls <dir> -rate 400` serves real `.ts` files paced like a live channel for player tests.
 
 Layout: `internal/source` (Xtream/M3U import), `internal/catalog` (in-memory lineup, numbering, queries), `internal/filter` (rules), `internal/epg` (XMLTV), `internal/hdhr` (tuner API + discovery), `internal/stream` (proxy), `internal/web` (panel + API), `internal/store` (SQLite).

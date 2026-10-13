@@ -393,6 +393,62 @@ func (m *Manager) openFFmpeg(ctx context.Context, req Request) (io.ReadCloser, e
 	return &ffmpegReader{ReadCloser: out, cmd: cmd, stderr: &stderr, log: m.Log, name: req.Name}, nil
 }
 
+// Transcode plays src to w through ffmpeg, copying the video and converting
+// the audio to stereo AAC, so browsers can play channels with AC-3 or MP2
+// audio. src should be this instance's own /stream URL, so the preview shares
+// the channel's upstream instead of opening another provider connection.
+func (m *Manager) Transcode(w http.ResponseWriter, r *http.Request, name, src string) {
+	if !m.ffmpegOK {
+		http.Error(w, "ffmpeg is not installed", http.StatusNotImplemented)
+		return
+	}
+	cmd := exec.CommandContext(r.Context(), m.FFmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
+		"-i", src, "-map", "0:v:0?", "-map", "0:a:0?", "-c:v", "copy", "-c:a", "aac", "-ac", "2", "-b:a", "192k",
+		"-f", "mpegts", "pipe:1")
+	hideWindow(cmd)
+	var stderr bytes.Buffer
+	cmd.Stderr = &limitedBuffer{buf: &stderr, max: 8 << 10}
+	out, err := cmd.StdoutPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+	m.Log.Info("preview transcode started", "channel", name)
+	buf := make([]byte, 64<<10)
+	n, err := io.ReadAtLeast(out, buf, 1)
+	if err != nil {
+		cmd.Process.Kill()
+		cmd.Wait()
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = "no data from stream"
+		}
+		m.Log.Warn("preview transcode failed", "channel", name, "err", redact.URL(msg))
+		http.Error(w, "transcode failed: "+redact.URL(msg), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp2t")
+	w.Header().Set("Cache-Control", "no-store")
+	rc := http.NewResponseController(w)
+	for {
+		if _, werr := w.Write(buf[:n]); werr != nil {
+			break
+		}
+		rc.Flush()
+		if n, err = out.Read(buf); err != nil {
+			break
+		}
+	}
+	m.Log.Info("preview transcode stopped", "channel", name)
+}
+
 type limitedBuffer struct {
 	mu  sync.Mutex
 	buf *bytes.Buffer
