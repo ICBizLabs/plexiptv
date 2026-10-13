@@ -95,6 +95,17 @@ function loadMpegts() {
   return mpegtsLoading;
 }
 
+// copyText copies text, or selects el for Ctrl+C where the clipboard API is
+// unavailable (plain http on a LAN address is not a secure context).
+function copyText(text, el) {
+  if (navigator.clipboard) return navigator.clipboard.writeText(text).then(() => toast('Copied'), () => {});
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  getSelection().removeAllRanges();
+  getSelection().addRange(range);
+  toast('Selected — press Ctrl+C to copy');
+}
+
 let player = null;
 function stopPlayer() {
   const p = player;
@@ -109,6 +120,7 @@ async function playChannel(r) {
   const video = h('video', { controls: true, autoplay: true, playsinline: true });
   const info = h('span', { class: 'muted mono' });
   const msg = h('div', { class: 'error' });
+  const code = h('code', {}, url);
   const mode = h('select', {}, opt('direct', 'Direct', 'direct'), opt('aac', 'Fix audio (ffmpeg → AAC)', ''));
   const settings = await api('GET', '/api/settings').catch(() => ({}));
   if (!settings.ffmpeg) { mode.options[1].disabled = true; mode.title = 'Needs ffmpeg'; }
@@ -159,7 +171,7 @@ async function playChannel(r) {
     h('div', { class: 'row', style: 'margin-top:8px' }, mode, info),
     msg,
     h('p', { class: 'muted', style: 'margin:8px 0 0' }, 'Watching uses one of your provider connections until you close this. Stream link for VLC: ',
-      h('code', {}, url), ' ', h('button', { class: 'small', onclick: () => navigator.clipboard.writeText(url).then(() => toast('Copied')).catch(() => {}) }, 'Copy')));
+      code, ' ', h('button', { class: 'small', onclick: () => copyText(url, code) }, 'Copy')));
   dlg.showModal();
   start();
 }
