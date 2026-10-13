@@ -136,8 +136,26 @@ async function playChannel(r) {
       if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('This browser can\'t play live streams. Open the link below in VLC instead.');
       const p = mpegts.createPlayer({ type: 'mpegts', isLive: true,
         url: mode.value === 'aac' ? `/api/channels/${r.id}/preview` : `/stream/${r.id}?via=panel` },
-      { enableStashBuffer: false, liveBufferLatencyChasing: true });
+      { autoCleanupSourceBuffer: true });
       player = p;
+      // Live catch-up. IPTV servers send video in bursts, so the player keeps
+      // a few seconds of buffer; if it falls far behind live it speeds up
+      // slightly instead of skipping, and only jumps after long pauses.
+      const sync = setInterval(() => {
+        if (player !== p) { clearInterval(sync); return; }
+        const b = video.buffered, t = video.currentTime;
+        if (!b.length || video.paused) return;
+        const end = b.end(b.length - 1), behind = end - t;
+        let next = -1; // start of the first buffered range after a gap at the playhead
+        for (let i = 0; i < b.length && next < 0; i++) {
+          if (t >= b.start(i) && t < b.end(i)) break;
+          if (b.start(i) > t) next = b.start(i);
+        }
+        if (next >= 0 && video.readyState < 3) video.currentTime = next + 0.05;
+        else if (behind > 30) video.currentTime = end - 4;
+        else if (behind > 10) video.playbackRate = 1.1;
+        else if (behind < 4) video.playbackRate = 1;
+      }, 1000);
       p.on(mpegts.Events.MEDIA_INFO, (mi) => {
         if (player !== p) return;
         info.textContent = [mi.videoCodec, mi.width && `${mi.width}×${mi.height}`, mi.fps && `${Math.round(mi.fps)} fps`, mi.audioCodec].filter(Boolean).join(' · ');

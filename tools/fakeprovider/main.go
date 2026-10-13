@@ -30,6 +30,7 @@ var (
 	progs   = flag.Int("progs", 12, "programmes (2h each) per guide channel")
 	hlsDir  = flag.String("hls", "", "directory served at /hls/ (for HLS tests)")
 	rateKB  = flag.Int("rate", 0, "pace /hls/*.ts files at this many KB/s, like a live channel (0 = full speed)")
+	burst   = flag.Duration("burst", 0, "with -rate, send data in bursts of this much playback time, like a CDN")
 	open    atomic.Int32
 )
 
@@ -192,23 +193,26 @@ func paced(next http.Handler) http.Handler {
 
 type pacedWriter struct {
 	http.ResponseWriter
-	start time.Time
-	sent  int
+	start   time.Time
+	sent    int
+	pending []byte
 }
 
+// Write holds data until a burst (-burst of playback time, at least 32 KB)
+// is ready, sends it, then sleeps until the stream is back on schedule.
 func (p *pacedWriter) Write(b []byte) (int, error) {
-	total := len(b)
-	for len(b) > 0 {
-		n := min(len(b), 32<<10)
-		if _, err := p.ResponseWriter.Write(b[:n]); err != nil {
+	size := max(32<<10, int(burst.Seconds()*float64(*rateKB<<10)))
+	p.pending = append(p.pending, b...)
+	for len(p.pending) >= size {
+		if _, err := p.ResponseWriter.Write(p.pending[:size]); err != nil {
 			return 0, err
 		}
 		p.ResponseWriter.(http.Flusher).Flush()
-		p.sent += n
-		b = b[n:]
+		p.sent += size
+		p.pending = p.pending[size:]
 		if ahead := time.Duration(p.sent)*time.Second/time.Duration(*rateKB<<10) - time.Since(p.start); ahead > 0 {
 			time.Sleep(ahead)
 		}
 	}
-	return total, nil
+	return len(b), nil
 }

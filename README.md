@@ -146,6 +146,6 @@ go run ./cmd/plexiptv -data ./data
 
 Build release binaries with `./build.sh` or `build.ps1`. The version comes from `cmd/plexiptv/main.go`; pass one to override it (`./build.sh 1.1`). Go 1.23+ is required, and no C compiler is needed.
 
-The panel player uses [mpegts.js](https://github.com/xqq/mpegts.js) 1.7.3 (Apache-2.0), vendored in `internal/web/ui/vendor/` so the panel works offline. `fakeprovider -hls <dir> -rate 400` serves real `.ts` files paced like a live channel for player tests.
+The panel player uses [mpegts.js](https://github.com/xqq/mpegts.js) 1.7.3 (Apache-2.0), vendored in `internal/web/ui/vendor/` so the panel works offline. `fakeprovider -hls <dir> -rate 400 -burst 2s` serves real `.ts` files paced like a live channel, in CDN-like bursts, for player tests.
 
 Layout: `internal/source` (Xtream/M3U import), `internal/catalog` (in-memory lineup, numbering, queries), `internal/filter` (rules), `internal/epg` (XMLTV), `internal/hdhr` (tuner API + discovery), `internal/stream` (proxy), `internal/web` (panel + API), `internal/store` (SQLite).
