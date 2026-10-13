@@ -1,5 +1,7 @@
 # plexiptv
 
+**Version 1.0**
+
 plexiptv makes your IPTV provider show up in Plex as one or more HDHomeRun network tuners, the same idea as xTeVe. It is built to stay fast with very large playlists (50k+ entries) and to make filtering simple. It is a single binary with no dependencies, and runs on Windows (including as a service) and Linux.
 
 - **Sources:** Xtream Codes accounts (server, username, password), M3U playlists (URL or local file) and extra XMLTV guides.
@@ -30,6 +32,21 @@ plexiptv makes your IPTV provider show up in Plex as one or more HDHomeRun netwo
    - When asked for a guide, choose **"Have an XMLTV guide on your server?"** and enter `http://192.168.1.20:34500/xmltv.xml`.
 
 The default port is **34500**, so plexiptv can run next to xTeVe (which uses 34400) while you switch over.
+
+### More than ~480 channels: one DVR per tuner
+
+Plex treats each tuner as a separate DVR. For a lineup like this:
+
+| Tuner | Port | Channels |
+|---|---|---|
+| plexiptv | 34500 | Entertainment, News, Movies |
+| plexiptv Sports | 34501 | Sports networks, team channels |
+| plexiptv Events | 34502 | ESPN+, Peacock, PPV and other event feeds |
+
+1. Create the extra tuners on the **Tuners** page, each with its own port and start number (e.g. 2000, 3000).
+2. Point include rules at them with the rule's *tuner* option.
+3. In Plex, add each one as its own DVR at `IP:port`. On the guide step, use **that tuner's** guide, e.g. `http://192.168.1.20:34501/xmltv.xml`. Each tuner's guide holds only its own channels.
+4. If you change rules later, click **Renumber…** on the Channels page (filtered to one tuner) to get tidy numbers again.
 
 ### Run as a Windows service
 
@@ -82,8 +99,11 @@ log_level: info
    1. include · group · starts with · `US |`
    2. exclude · name · matches · `\b(4K|UHD|HEVC)\b`
    3. include · group · equals · `US | Sports` → tuner *plexiptv Sports*
+   4. exclude · name · contains · `NO EVENT` (empty event placeholders)
 2. A **manual on/off** on the Channels page beats every rule. "Follow rules" clears it.
 3. Matching ignores case. A rule can be limited to one source. An include rule can also send its channels to a specific tuner.
+
+Prefer several narrow "group equals" rules (the Groups page creates them for you) over one broad "group contains `USA`". Providers often have thousands of event slots and free-TV channels in such groups, and the lowest-numbered ones are what fills a tuner's 480.
 
 ## Endpoints
 
@@ -101,6 +121,7 @@ Check the **Logs** page first, or `data/plexiptv.log`. Credentials are redacted 
 | Problem | What to check |
 |---|---|
 | Plex setup stuck on "Finding the best guide" | The lineup is too big. Keep each tuner under ~480 channels; the Dashboard shows "sent to Plex" per tuner. On the guide step, choose *"Have an XMLTV guide on your server?"* and use `/xmltv.xml`. |
+| Plex setup fails right after reading the lineup | Plex test-plays a channel during setup. If the first channels are empty event slots (`NFHS Network 12: NO EVENT`), the provider never answers and Plex gives up. The log shows `upstream interrupted … timeout awaiting response headers`. Exclude them (name contains `NO EVENT`) and redo the setup. |
 | Not sure what Plex did | Every Plex request (`discover.json`, `lineup.json`, `xmltv.xml`, …) is logged as `tuner request`, with status and user agent. |
 | Plex doesn't find the tuner | Add it by `IP:port` from the dashboard. Allow the exe through the firewall. UDP 65001 must be reachable for auto-discovery. |
 | Channels missing in Plex | Plex hides channels that have no guide data: keep *placeholder guide entries* on (Settings). Check the tuner isn't over ~480 channels. |
@@ -111,7 +132,7 @@ Check the **Logs** page first, or `data/plexiptv.log`. Credentials are redacted 
 
 ## Status
 
-Tested against the bundled fake provider, with 60k live channels, 40k VOD/series entries, a slow provider and a 274 MB guide. Not yet verified against a real Plex server or real providers. Reports and logs are welcome.
+Version 1.0. Tested against the bundled fake provider, with 60k live channels, 40k VOD/series entries, a slow provider and a 274 MB guide. A real 39k-channel Xtream account imports in seconds, and Plex Media Server 1.43 discovers the tuners and reads their lineups. Full playback through Plex, the Windows service install and HLS on live channels are not yet confirmed. Reports and logs are welcome.
 
 ## Development
 
@@ -121,6 +142,6 @@ go run ./tools/fakeprovider -live 60000 -vod 30000 -series 10000   # fake Xtream
 go run ./cmd/plexiptv -data ./data
 ```
 
-Build release binaries with `./build.sh` or `build.ps1`. Go 1.23+ is required, and no C compiler is needed.
+Build release binaries with `./build.sh` or `build.ps1`. The version comes from `cmd/plexiptv/main.go`; pass one to override it (`./build.sh 1.1`). Go 1.23+ is required, and no C compiler is needed.
 
 Layout: `internal/source` (Xtream/M3U import), `internal/catalog` (in-memory lineup, numbering, queries), `internal/filter` (rules), `internal/epg` (XMLTV), `internal/hdhr` (tuner API + discovery), `internal/stream` (proxy), `internal/web` (panel + API), `internal/store` (SQLite).

@@ -19,7 +19,7 @@ import (
 	"plexiptv/internal/web"
 )
 
-var version = "dev"
+var version = "1.0"
 
 type program struct {
 	dataDir string
