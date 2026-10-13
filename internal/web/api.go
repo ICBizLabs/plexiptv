@@ -22,10 +22,11 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	type dev struct {
 		store.Device
 		Channels int `json:"channels"`
+		Sent     int `json:"sent"`
 	}
 	var devs []dev
 	for _, d := range s.a.Cat.Devices() {
-		devs = append(devs, dev{d, counts[d.ID]})
+		devs = append(devs, dev{d, counts[d.ID].Enabled, counts[d.ID].Sent})
 	}
 	var rulesErr string
 	if err := s.a.Cat.RulesError(); err != nil {
@@ -370,11 +371,12 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	type dev struct {
 		store.Device
 		Channels int  `json:"channels"`
+		Sent     int  `json:"sent"`
 		WebPort  bool `json:"web_port"`
 	}
 	out := []dev{}
 	for _, d := range s.a.Cat.Devices() {
-		out = append(out, dev{d, counts[d.ID], d.Port == s.a.WebPort()})
+		out = append(out, dev{d, counts[d.ID].Enabled, counts[d.ID].Sent, d.Port == s.a.WebPort()})
 	}
 	writeJSON(w, out)
 }
@@ -403,6 +405,9 @@ func (s *Server) saveDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Tuners <= 0 {
 		in.Tuners = 2
+	}
+	if in.MaxChannels < 0 {
+		in.MaxChannels = 0
 	}
 	if in.Name == "" {
 		in.Name = fmt.Sprintf("plexiptv %d", len(devs)+1)

@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS devices(
 	device_id TEXT NOT NULL,
 	port INTEGER NOT NULL UNIQUE,
 	tuners INTEGER NOT NULL DEFAULT 2,
-	start_number INTEGER NOT NULL DEFAULT 1000
+	start_number INTEGER NOT NULL DEFAULT 1000,
+	max_channels INTEGER NOT NULL DEFAULT 480   -- 0 = no limit
 );
 CREATE TABLE IF NOT EXISTS epg_channels(
 	source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -120,6 +121,7 @@ func Open(dataDir string) (*Store, error) {
 func migrate(db *sql.DB) error {
 	for _, stmt := range []string{
 		`ALTER TABLE sources ADD COLUMN stream_ext TEXT NOT NULL DEFAULT 'ts'`,
+		`ALTER TABLE devices ADD COLUMN max_channels INTEGER NOT NULL DEFAULT 480`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return err
@@ -492,10 +494,11 @@ type Device struct {
 	Port        int    `json:"port"`
 	Tuners      int    `json:"tuners"`
 	StartNumber int    `json:"start_number"`
+	MaxChannels int    `json:"max_channels"` // 0 = no limit
 }
 
 func (s *Store) Devices(ctx context.Context) ([]Device, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,name,device_id,port,tuners,start_number FROM devices ORDER BY id`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,name,device_id,port,tuners,start_number,max_channels FROM devices ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -503,7 +506,7 @@ func (s *Store) Devices(ctx context.Context) ([]Device, error) {
 	var out []Device
 	for rows.Next() {
 		var d Device
-		if err := rows.Scan(&d.ID, &d.Name, &d.DeviceID, &d.Port, &d.Tuners, &d.StartNumber); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.DeviceID, &d.Port, &d.Tuners, &d.StartNumber, &d.MaxChannels); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -513,16 +516,16 @@ func (s *Store) Devices(ctx context.Context) ([]Device, error) {
 
 func (s *Store) SaveDevice(ctx context.Context, d *Device) error {
 	if d.ID == 0 {
-		res, err := s.DB.ExecContext(ctx, `INSERT INTO devices(name,device_id,port,tuners,start_number) VALUES(?,?,?,?,?)`,
-			d.Name, d.DeviceID, d.Port, d.Tuners, d.StartNumber)
+		res, err := s.DB.ExecContext(ctx, `INSERT INTO devices(name,device_id,port,tuners,start_number,max_channels) VALUES(?,?,?,?,?,?)`,
+			d.Name, d.DeviceID, d.Port, d.Tuners, d.StartNumber, d.MaxChannels)
 		if err != nil {
 			return err
 		}
 		d.ID, err = res.LastInsertId()
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE devices SET name=?,port=?,tuners=?,start_number=? WHERE id=?`,
-		d.Name, d.Port, d.Tuners, d.StartNumber, d.ID)
+	_, err := s.DB.ExecContext(ctx, `UPDATE devices SET name=?,port=?,tuners=?,start_number=?,max_channels=? WHERE id=?`,
+		d.Name, d.Port, d.Tuners, d.StartNumber, d.MaxChannels, d.ID)
 	return err
 }
 

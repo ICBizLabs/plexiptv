@@ -23,6 +23,7 @@ type channel struct {
 type state struct {
 	enabled  bool
 	manual   bool
+	capped   bool // enabled, but beyond its tuner's channel limit: not sent to Plex
 	deviceID int64
 	ruleID   int64
 }
@@ -236,6 +237,7 @@ func (c *Catalog) computeLocked(ctx context.Context) error {
 		c.ov[id] = o
 		changed = append(changed, o)
 	}
+	c.applyCapsLocked(st)
 	c.state = st
 	c.version++
 	if len(changed) > 0 {
@@ -244,6 +246,34 @@ func (c *Catalog) computeLocked(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// applyCapsLocked marks enabled channels beyond each tuner's MaxChannels
+// (lowest numbers win). Plex stalls on huge lineups, so the overflow is
+// held back rather than sent.
+func (c *Catalog) applyCapsLocked(st []state) {
+	limit := map[int64]int{}
+	for _, d := range c.devices {
+		limit[d.ID] = d.MaxChannels
+	}
+	byDev := map[int64][]int{}
+	for i := range st {
+		if st[i].enabled && limit[st[i].deviceID] > 0 {
+			byDev[st[i].deviceID] = append(byDev[st[i].deviceID], i)
+		}
+	}
+	for dev, idx := range byDev {
+		max := limit[dev]
+		if len(idx) <= max {
+			continue
+		}
+		sort.Slice(idx, func(a, b int) bool {
+			return c.ov[c.chans[idx[a]].ID].Number < c.ov[c.chans[idx[b]].ID].Number
+		})
+		for _, i := range idx[max:] {
+			st[i].capped = true
+		}
+	}
 }
 
 func (c *Catalog) entryLocked(i int) Entry {
@@ -266,13 +296,14 @@ func (c *Catalog) entryLocked(i int) Entry {
 	return e
 }
 
-// Lineup returns enabled channels for a device (0 = all devices), by number.
+// Lineup returns the channels sent to Plex for a device (0 = all devices),
+// by number: enabled and within the tuner's channel limit.
 func (c *Catalog) Lineup(deviceID int64) []Entry {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	var out []Entry
 	for i := range c.chans {
-		if !c.state[i].enabled || (deviceID != 0 && c.state[i].deviceID != deviceID) {
+		if !c.state[i].enabled || c.state[i].capped || (deviceID != 0 && c.state[i].deviceID != deviceID) {
 			continue
 		}
 		out = append(out, c.entryLocked(i))
@@ -321,6 +352,7 @@ type Row struct {
 	DeviceID   int64  `json:"device_id"`
 	Enabled    bool   `json:"enabled"`
 	Manual     bool   `json:"manual"`
+	Capped     bool   `json:"capped"`
 	RuleID     int64  `json:"rule_id"`
 	Mode       string `json:"mode"`
 }
@@ -330,7 +362,7 @@ type Query struct {
 	Group    string
 	SourceID int64
 	DeviceID int64
-	Status   string // all | enabled | disabled | manual | noepg
+	Status   string // all | enabled | disabled | manual | noepg | capped
 	Sort     string // source | number | name
 	Offset   int
 	Limit    int
@@ -342,7 +374,7 @@ func (c *Catalog) rowLocked(i int) Row {
 	return Row{
 		ID: ch.ID, SourceID: ch.SourceID, SourceName: c.sources[ch.SourceID].Name, Name: e.Name, OrigName: ch.Name,
 		Group: ch.Group, Logo: e.Logo, TvgID: ch.TvgID, EPGID: e.EPGID, Number: e.Number, DeviceID: e.DeviceID,
-		Enabled: e.Enabled, Manual: c.state[i].manual, RuleID: c.state[i].ruleID, Mode: e.Mode,
+		Enabled: e.Enabled, Manual: c.state[i].manual, Capped: c.state[i].capped, RuleID: c.state[i].ruleID, Mode: e.Mode,
 	}
 }
 
@@ -372,6 +404,10 @@ func (c *Catalog) matchQuery(i int, q *Query, terms []string) bool {
 		}
 	case "manual":
 		if !s.manual {
+			return false
+		}
+	case "capped":
+		if !s.capped {
 			return false
 		}
 	case "noepg":
@@ -521,18 +557,25 @@ func (c *Catalog) RuleCounts() map[int64]int {
 	return out
 }
 
+// DeviceStat counts a tuner's channels: Enabled by rules/overrides, and
+// Sent to Plex after the channel limit.
 type DeviceStat struct {
-	DeviceID int64 `json:"device_id"`
-	Channels int   `json:"channels"`
+	Enabled int `json:"enabled"`
+	Sent    int `json:"sent"`
 }
 
-func (c *Catalog) DeviceStats() map[int64]int {
+func (c *Catalog) DeviceStats() map[int64]DeviceStat {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	out := map[int64]int{}
+	out := map[int64]DeviceStat{}
 	for i := range c.state {
 		if c.state[i].enabled {
-			out[c.state[i].deviceID]++
+			d := out[c.state[i].deviceID]
+			d.Enabled++
+			if !c.state[i].capped {
+				d.Sent++
+			}
+			out[c.state[i].deviceID] = d
 		}
 	}
 	return out

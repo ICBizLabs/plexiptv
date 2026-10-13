@@ -106,3 +106,52 @@ func TestStableNumbering(t *testing.T) {
 		t.Fatalf("number takeover: %v", got)
 	}
 }
+
+func TestTunerChannelLimit(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	src := store.Source{Name: "p", Kind: "m3u", URL: "x", Enabled: true}
+	st.SaveSource(ctx, &src)
+	dev := store.Device{Name: "d", DeviceID: "11111111", Port: 1, Tuners: 2, StartNumber: 1, MaxChannels: 2}
+	st.SaveDevice(ctx, &dev)
+	st.SaveRule(ctx, &store.Rule{Action: "include", Field: "any", Op: "contains", Value: "", Enabled: true})
+	importChannels(t, st, src.ID, []store.Channel{
+		{ExtKey: "a", Name: "A"}, {ExtKey: "b", Name: "B"}, {ExtKey: "c", Name: "C"},
+	})
+	c := New(st)
+	if err := c.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := numbers(c); fmt.Sprint(got) != fmt.Sprint(map[string]int{"A": 1, "B": 2}) {
+		t.Fatalf("lineup should hold the 2 lowest numbers, got %v", got)
+	}
+	if s := c.DeviceStats()[dev.ID]; s.Enabled != 3 || s.Sent != 2 {
+		t.Fatalf("stats %+v", s)
+	}
+	rows, _ := c.Query(Query{Status: "capped"})
+	if len(rows) != 1 || rows[0].Name != "C" || !rows[0].Capped {
+		t.Fatalf("capped rows %+v", rows)
+	}
+
+	// Renumbering C below the others pushes B out instead.
+	rowsC, _ := c.Query(Query{Search: "c"})
+	if err := c.Renumber(ctx, []int64{rowsC[0].ID}, 1); err != nil {
+		t.Fatal(err)
+	}
+	got := numbers(c)
+	if got["C"] != 1 || len(got) != 2 {
+		t.Fatalf("after renumber %v", got)
+	}
+
+	// Lifting the limit sends everything.
+	dev.MaxChannels = 0
+	st.SaveDevice(ctx, &dev)
+	c.ReloadMeta(ctx)
+	if got := numbers(c); len(got) != 3 {
+		t.Fatalf("no limit should send all, got %v", got)
+	}
+}

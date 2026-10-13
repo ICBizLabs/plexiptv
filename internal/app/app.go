@@ -101,7 +101,7 @@ func (a *App) ensureDevice(ctx context.Context) error {
 		return err
 	}
 	if len(devs) == 0 {
-		return a.St.SaveDevice(ctx, &store.Device{Name: "plexiptv", DeviceID: RandomDeviceID(), Port: a.webPort, Tuners: 4, StartNumber: 1000})
+		return a.St.SaveDevice(ctx, &store.Device{Name: "plexiptv", DeviceID: RandomDeviceID(), Port: a.webPort, Tuners: 4, StartNumber: 1000, MaxChannels: 480})
 	}
 	for _, d := range devs {
 		if d.Port == a.webPort {
@@ -162,7 +162,7 @@ func (a *App) DisplayHost() string {
 
 // deviceMux serves the HDHomeRun API for whichever device owns port, plus
 // the stream, XMLTV and M3U endpoints. extra (the web UI) is mounted at "/".
-func (a *App) deviceMux(port int, extra http.Handler) *http.ServeMux {
+func (a *App) deviceMux(port int, extra http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	h := &hdhr.Handlers{
 		Advertise: a.Cfg.AdvertiseHost,
@@ -181,6 +181,10 @@ func (a *App) deviceMux(port int, extra http.Handler) *http.ServeMux {
 				items[i] = hdhr.LineupItem{GuideNumber: hdhr.GuideNumber(e.Number), GuideName: e.Name,
 					URL: fmt.Sprintf("%s/stream/%d", base, e.ID), HD: 1}
 			}
+			if st := a.Cat.DeviceStats()[d.ID]; st.Enabled > st.Sent {
+				a.Log.Warn("tuner channel limit reached: extra channels not sent to Plex",
+					"tuner", d.Name, "enabled", st.Enabled, "sent", st.Sent, "limit", d.MaxChannels)
+			}
 			return items
 		},
 	}
@@ -192,7 +196,55 @@ func (a *App) deviceMux(port int, extra http.Handler) *http.ServeMux {
 	if extra != nil {
 		mux.Handle("/", extra)
 	}
-	return mux
+	return a.logPlexRequests(port, mux)
+}
+
+// plexPaths are the endpoints Plex calls while setting up and refreshing a
+// tuner. Logging them shows whether (and what) Plex actually requested.
+var plexPaths = map[string]slog.Level{
+	"/discover.json":      slog.LevelInfo,
+	"/lineup.json":        slog.LevelInfo,
+	"/device.xml":         slog.LevelInfo,
+	"/capability":         slog.LevelInfo,
+	"/lineup.post":        slog.LevelInfo,
+	"/xmltv.xml":          slog.LevelInfo,
+	"/lineup.m3u":         slog.LevelInfo,
+	"/lineup_status.json": slog.LevelDebug, // polled repeatedly during a scan
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	n, err := s.ResponseWriter.Write(b)
+	s.bytes += int64(n)
+	return n, err
+}
+
+func (a *App) logPlexRequests(port int, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		level, ok := plexPaths[r.URL.Path]
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rec := &statusRecorder{ResponseWriter: w}
+		start := time.Now()
+		next.ServeHTTP(rec, r)
+		a.Log.Log(r.Context(), level, "tuner request", "path", r.URL.Path, "port", port, "client", r.RemoteAddr,
+			"agent", r.UserAgent(), "status", rec.status, "bytes", rec.bytes, "took", time.Since(start).Round(time.Millisecond))
+	})
 }
 
 // syncDevices starts/stops listeners so every device port (other than the

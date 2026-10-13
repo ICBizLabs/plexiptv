@@ -57,6 +57,15 @@ function bytes(n) {
   return n.toFixed(i ? 1 : 0) + ' ' + u[i];
 }
 const PLEX_LIMIT = 480;
+// tunerWarning explains a tuner whose lineup is held back by its channel limit
+// (or, with no limit, one that is too big for Plex).
+function tunerWarning(d) {
+  if (d.channels > d.sent) {
+    return `${d.channels.toLocaleString()} channels selected, but only the first ${d.sent.toLocaleString()} (lowest numbers) are sent to Plex because of this tuner's limit. Narrow your groups/rules or add another tuner.`;
+  }
+  if (d.sent > PLEX_LIMIT) return `Over Plex's ~${PLEX_LIMIT} channel limit per tuner. Plex setup may hang on "Finding the best guide". Set a channel limit or add another tuner.`;
+  return null;
+}
 
 // ---------- modal ----------
 function modal(title, body, actions) {
@@ -131,8 +140,8 @@ views.dashboard = async (view) => {
   const base = `http://${store.host}:${st.web_port}`;
   const devCards = st.devices.map((d) => h('div', { class: 'card' },
     h('h2', {}, d.name),
-    h('div', { class: 'stat' }, d.channels, h('span', { class: 'muted', style: 'font-size:13px' }, ' channels')),
-    d.channels > PLEX_LIMIT ? h('p', { class: 'warn' }, `Over Plex's ~${PLEX_LIMIT} channel limit per tuner — move some channels to another tuner.`) : null,
+    h('div', { class: 'stat' }, d.sent.toLocaleString(), h('span', { class: 'muted', style: 'font-size:13px' }, ' channels sent to Plex')),
+    tunerWarning(d) ? h('p', { class: 'warn' }, tunerWarning(d)) : null,
     h('p', {}, 'Add to Plex: ', h('code', {}, `${store.host}:${d.port}`)),
     h('p', { class: 'muted' }, `Device ID ${d.device_id} · ${d.tuners} tuners · numbers from ${d.start_number}`),
   ));
@@ -189,7 +198,8 @@ views.channels = async (view, params) => {
     groupSel,
     h('select', { onchange: (e) => { ch.status = e.target.value; reload(); } },
       opt('all', 'Any status', ch.status), opt('enabled', 'In lineup', ch.status), opt('disabled', 'Not in lineup', ch.status),
-      opt('manual', 'Manually set', ch.status), opt('noepg', 'In lineup, no EPG id', ch.status)),
+      opt('manual', 'Manually set', ch.status), opt('noepg', 'In lineup, no EPG id', ch.status),
+      opt('capped', 'Over tuner limit (not sent)', ch.status)),
     store.devices.length > 1 ? h('select', { onchange: (e) => { ch.device = e.target.value; reload(); } },
       opt('', 'All tuners', ch.device), store.devices.map((d) => opt(d.id, d.name, ch.device))) : null,
     h('select', { onchange: (e) => { ch.sort = e.target.value; reload(); } },
@@ -299,10 +309,10 @@ views.channels = async (view, params) => {
         h('td', { class: 'mono' }, h('a', { onclick: () => epgDialog(r, () => reload(true)) }, r.epg_id || 'set…')),
         store.devices.length > 1 ? h('td', {}, r.enabled ? deviceName(r.device_id) : '') : null,
         h('td', {}, h('span', {
-          class: 'pill ' + (r.enabled ? (r.manual ? 'on manual' : 'on') : (r.manual ? 'manual' : '')),
+          class: 'pill ' + (r.capped ? 'capped' : r.enabled ? (r.manual ? 'on manual' : 'on') : (r.manual ? 'manual' : '')),
           style: 'cursor:pointer', title: 'Click to toggle (sets a manual override)',
           onclick: () => patch([r.id], { enabled: r.enabled ? 'off' : 'on' }),
-        }, r.enabled ? 'in lineup' : 'off', r.manual ? ' · manual' : (r.rule_id ? ' · rule' : ''))),
+        }, r.capped ? 'over tuner limit' : r.enabled ? 'in lineup' : 'off', r.manual ? ' · manual' : (r.rule_id ? ' · rule' : ''))),
       );
     });
     fill(tableWrap, h('table', {}, h('thead', {}, head), h('tbody', {}, body)));
@@ -548,14 +558,16 @@ views.devices = async (view) => {
     h('div', { class: 'card muted' }, `Plex handles about ${PLEX_LIMIT} channels per tuner device. With a bigger lineup, add more tuners and send groups to them with a rule's tuner option or "Move to tuner" on the Channels page. Each tuner gets its own port and is added to Plex as a separate DVR.`),
     h('div', { class: 'toolbar' }, h('button', { class: 'primary', onclick: () => deviceDialog({}, devices) }, '+ Add tuner')),
     h('div', { class: 'table-wrap' }, h('table', {},
-      h('thead', {}, h('tr', {}, ['Name', 'Plex address', 'Device ID', 'Tuners', 'Numbers from', 'Channels', ''].map((t) => h('th', {}, t)))),
+      h('thead', {}, h('tr', {}, ['Name', 'Plex address', 'Device ID', 'Tuners', 'Numbers from', 'Channel limit', 'Sent / selected', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, devices.map((d) => h('tr', {},
         h('td', {}, d.name, d.web_port ? h('span', { class: 'muted' }, ' (default)') : null),
         h('td', { class: 'mono' }, `${store.host}:${d.port}`),
         h('td', { class: 'mono' }, d.device_id),
         h('td', {}, d.tuners),
         h('td', {}, d.start_number),
-        h('td', { class: d.channels > PLEX_LIMIT ? 'warn' : '' }, d.channels.toLocaleString(), d.channels > PLEX_LIMIT ? ' ⚠' : ''),
+        h('td', {}, d.max_channels ? d.max_channels.toLocaleString() : 'none'),
+        h('td', { class: tunerWarning(d) ? 'warn' : '', title: tunerWarning(d) || '' },
+          `${d.sent.toLocaleString()} / ${d.channels.toLocaleString()}`, tunerWarning(d) ? ' ⚠' : ''),
         h('td', {}, h('button', { class: 'small', onclick: () => deviceDialog(d, devices) }, 'Edit'), ' ',
           !d.web_port ? h('button', { class: 'small danger', onclick: async () => {
             if (!confirm(`Delete ${d.name}? Its channels move to the default tuner.`)) return;
@@ -571,16 +583,18 @@ function deviceDialog(d, devices) {
     port: h('input', { type: 'number', value: d.port || nextPort, disabled: d.web_port }),
     tuners: h('input', { type: 'number', min: 1, max: 32, value: d.tuners || 2 }),
     start: h('input', { type: 'number', min: 1, value: d.start_number || (Math.max(...devices.map((x) => x.start_number)) + 1000) }),
+    max: h('input', { type: 'number', min: 0, value: isNew ? PLEX_LIMIT : d.max_channels }),
   };
   modal(isNew ? 'Add tuner' : 'Edit tuner', h('div', {},
     field('Name (shown in Plex)', i.name),
     field('Port', i.port, d.web_port ? 'The default tuner shares the web panel port.' : 'Allow this port through the firewall.'),
     field('Tuner count', i.tuners, 'How many streams Plex may open at once. Match your provider connection limit.'),
-    field('Auto-number channels from', i.start)), [
+    field('Auto-number channels from', i.start),
+    field('Channel limit', i.max, `Only this many channels (lowest numbers first) are sent to Plex. Plex stalls on lineups much over ~${PLEX_LIMIT}. 0 = no limit.`)), [
     h('button', { value: 'cancel' }, 'Cancel'),
     h('button', { class: 'primary', onclick: async (e) => {
       e.preventDefault();
-      const out = { name: i.name.value, port: +i.port.value, tuners: +i.tuners.value, start_number: +i.start.value };
+      const out = { name: i.name.value, port: +i.port.value, tuners: +i.tuners.value, start_number: +i.start.value, max_channels: +i.max.value };
       try { await api(isNew ? 'POST' : 'PUT', isNew ? '/api/devices' : `/api/devices/${d.id}`, out); closeModal(); route(); } catch (err) { fail(err); }
     } }, 'Save')]);
 }

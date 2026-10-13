@@ -9,7 +9,7 @@ plexiptv makes your IPTV provider show up in Plex as one or more HDHomeRun netwo
   - Write ordered include/exclude rules (contains, equals, starts with, regex) on the Rules page. Each rule shows a live match count and sample matches while you type.
   - Override single channels on the Channels page: on/off, number, name, logo, EPG id.
 - **Stable channel numbers.** Numbers are stored per channel, keyed by the provider's stream id. They do not move when the provider reorders or briefly drops channels, so Plex's guide mapping doesn't break.
-- **Multiple tuners.** Plex handles about 480 channels per DVR device. Add more tuners (each on its own port) and send groups to them by rule.
+- **Multiple tuners.** Plex handles about 480 channels per DVR device. Each tuner has a channel limit (default 480): only the lowest-numbered channels up to the limit are sent to Plex, so an over-broad rule can't stall Plex setup. Add more tuners (each on its own port) and send groups to them by rule.
 - **Stream proxy:**
   - One provider connection is shared by everyone watching the same channel.
   - The provider connection limit is enforced, and a clean "all tuners busy" is returned when it's reached.
@@ -99,6 +99,8 @@ Check the **Logs** page first, or `data/plexiptv.log`. Credentials are redacted 
 
 | Problem | What to check |
 |---|---|
+| Plex setup stuck on "Finding the best guide" | The lineup is too big. Keep each tuner under ~480 channels; the Dashboard shows "sent to Plex" per tuner. On the guide step, choose *"Have an XMLTV guide on your server?"* and use `/xmltv.xml`. |
+| Not sure what Plex did | Every Plex request (`discover.json`, `lineup.json`, `xmltv.xml`, …) is logged as `tuner request`, with status and user agent. |
 | Plex doesn't find the tuner | Add it by `IP:port` from the dashboard. Allow the exe through the firewall. UDP 65001 must be reachable for auto-discovery. |
 | Channels missing in Plex | Plex hides channels that have no guide data: keep *placeholder guide entries* on (Settings). Check the tuner isn't over ~480 channels. |
 | "All tuners are in use" | The provider's connection limit was reached. See *Sources → streams x/y*. Set *Max concurrent streams* if the provider reports it wrong. |
